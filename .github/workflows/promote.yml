@@ -43,7 +43,7 @@ jobs:
           {
             echo "# E4 · promote · PR #$PRNUM · run $RUNID"
             echo ""
-            echo "    SOY EL PROMOTE DE LA BASE"
+            echo "    SOY EL PROMOTE DEL HEAD"
             echo ""
             echo "    hora_utc            = $(date -u +%FT%TZ)"
             echo "    run_url             = https://github.com/$R/actions/runs/$RUNID"
