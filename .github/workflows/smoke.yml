@@ -1,0 +1,140 @@
+name: SMOKE
+
+# E-1 (D-T8 ii / C-4) y E-2 (D-T8 iii, precondicion de P3).
+# Publica cada observable como archivo en `resultados/` porque la silla que audita
+# tiene lectura por API pero NO acceso a los logs de Actions.
+
+on:
+  workflow_run:
+    workflows: [CD]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  smoke-post-deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      checks: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+      CTX: ${{ github.sha }}
+      HEADSHA: ${{ github.event.workflow_run.head_sha }}
+      RUNID: ${{ github.run_id }}
+      WR_ID: ${{ github.event.workflow_run.id }}
+      WR_URL: ${{ github.event.workflow_run.html_url }}
+      GH_REF: ${{ github.ref }}
+    steps:
+      - name: E1 medir contexto, check-runs, publicar y re-leer
+        run: |
+          set -u
+          O=e1.md
+          {
+            echo "# E1 · smoke run $RUNID"
+            echo ""
+            echo "    hora_utc              = $(date -u +%FT%TZ)"
+            echo "    run_url               = https://github.com/$R/actions/runs/$RUNID"
+            echo "    github.sha            = $CTX"
+            echo "    workflow_run.head_sha = $HEADSHA"
+            echo "    github.ref            = $GH_REF"
+            echo "    workflow_run.id       = $WR_ID"
+            echo "    workflow_run.html_url = $WR_URL"
+            if [ "$CTX" = "$HEADSHA" ]; then
+              echo "    CONTEXTO == HEAD_SHA  = SI"
+            else
+              echo "    CONTEXTO == HEAD_SHA  = NO"
+            fi
+            echo ""
+          } > $O
+          for S in "$CTX" "$HEADSHA"; do
+            {
+              echo "## ANTES · check-runs en ${S:0:7}"
+              gh api "repos/$R/commits/$S/check-runs?per_page=100" --jq '"    total=\(.total_count)", (.check_runs[] | "    \(.name) · \(.status)/\(.conclusion) · head_sha=\(.head_sha[0:7])")'
+              echo ""
+            } >> $O
+          done
+          {
+            echo "## POST check-run smoke-verificado, atado a head_sha"
+            gh api -X POST "repos/$R/check-runs" -f name=smoke-verificado -f head_sha="$HEADSHA" -f status=completed -f conclusion=success --jq '"    publicado name=\(.name) head_sha=\(.head_sha[0:7]) id=\(.id)"'
+            echo ""
+          } >> $O
+          sleep 4
+          for S in "$CTX" "$HEADSHA"; do
+            {
+              echo "## DESPUES · check-runs en ${S:0:7}"
+              gh api "repos/$R/commits/$S/check-runs?per_page=100" --jq '"    total=\(.total_count)", (.check_runs[] | "    \(.name) · \(.status)/\(.conclusion) · head_sha=\(.head_sha[0:7])")'
+              echo ""
+            } >> $O
+          done
+          cat $O >> "$GITHUB_STEP_SUMMARY"
+          gh api -X PUT "repos/$R/contents/resultados/E1-smoke-$RUNID.md" -f message="obs E1 run $RUNID" -f branch=resultados -f content="$(base64 -w0 $O)" --jq '.content.path'
+
+  ensayo-sistema:
+    needs: smoke-post-deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: desarrollo
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+      RUNID: ${{ github.run_id }}
+      GH_REF: ${{ github.ref }}
+      EVENTO: ${{ github.event_name }}
+      ENSAYO_SECRETO: ${{ secrets.ENSAYO_SECRETO }}
+    steps:
+      - name: E2 largo del secret, JAMAS el valor
+        run: |
+          set -u
+          V="${ENSAYO_SECRETO:-}"
+          O=e2.md
+          {
+            echo "# E2 · environment 'desarrollo' bajo workflow_run · run $RUNID"
+            echo ""
+            echo "    hora_utc               = $(date -u +%FT%TZ)"
+            echo "    run_url                = https://github.com/$R/actions/runs/$RUNID"
+            echo "    evento                 = $EVENTO"
+            echo "    github.ref             = $GH_REF"
+            echo "    LARGO ENSAYO_SECRETO   = ${#V}"
+            if [ -z "$V" ]; then
+              echo "    LEE EL SECRET          = NO"
+            else
+              echo "    LEE EL SECRET          = SI"
+            fi
+          } > $O
+          cat $O >> "$GITHUB_STEP_SUMMARY"
+          gh api -X PUT "repos/$R/contents/resultados/E2-$RUNID.md" -f message="obs E2 run $RUNID" -f branch=resultados -f content="$(base64 -w0 $O)" --jq '.content.path'
+
+  e2-reporte:
+    needs: [smoke-post-deploy, ensayo-sistema]
+    if: always() && needs.smoke-post-deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+      RUNID: ${{ github.run_id }}
+      RES: ${{ needs.ensayo-sistema.result }}
+    steps:
+      - name: E2 control - que le paso al job con environment
+        run: |
+          set -u
+          O=e2r.md
+          {
+            echo "# E2-control · resultado del job ensayo-sistema · run $RUNID"
+            echo ""
+            echo "    hora_utc                     = $(date -u +%FT%TZ)"
+            echo "    run_url                      = https://github.com/$R/actions/runs/$RUNID"
+            echo "    needs.ensayo-sistema.result  = $RES"
+            echo ""
+            echo "    Lectura: 'success' con E2 diciendo SI  => el environment entrega el secret bajo workflow_run."
+            echo "    'failure' o 'skipped' sin archivo E2   => la regla de rama bloqueo el job (P3 cambia de forma)."
+          } > $O
+          cat $O >> "$GITHUB_STEP_SUMMARY"
+          gh api -X PUT "repos/$R/contents/resultados/E2-control-$RUNID.md" -f message="obs E2-control run $RUNID" -f branch=resultados -f content="$(base64 -w0 $O)" --jq '.content.path'

@@ -1,0 +1,54 @@
+name: E3-BAK6
+
+# E-3 (BAK-6). Sobre UN mismo SHA publica tres check-runs con el MISMO nombre:
+# success, luego failure, luego uno en curso. Tras cada paso lee
+# `?check_name=prueba&filter=latest` y `filter=all`, que es exactamente lo que
+# P6 (ii) asume. La conclusion sale del log, no de la doc.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      checks: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+      S: ${{ github.sha }}
+      RUNID: ${{ github.run_id }}
+    steps:
+      - name: E3 success, failure, in_progress
+        run: |
+          set -u
+          O=e3.md
+          ver() {
+            echo "### $1"
+            echo "    filter=latest:"
+            gh api "repos/$R/commits/$S/check-runs?check_name=prueba&filter=latest&per_page=100" --jq '"      total=\(.total_count)", (.check_runs[] | "      \(.status)/\(.conclusion) · completed_at=\(.completed_at) · id=\(.id)")'
+            echo "    filter=all:"
+            gh api "repos/$R/commits/$S/check-runs?check_name=prueba&filter=all&per_page=100" --jq '"      total=\(.total_count)", (.check_runs[] | "      \(.status)/\(.conclusion) · completed_at=\(.completed_at) · id=\(.id)")'
+            echo ""
+          }
+          {
+            echo "# E3 · BAK-6 · run $RUNID"
+            echo ""
+            echo "    hora_utc = $(date -u +%FT%TZ)"
+            echo "    run_url  = https://github.com/$R/actions/runs/$RUNID"
+            echo "    SHA      = ${S:0:7}"
+            echo ""
+            gh api -X POST "repos/$R/check-runs" -f name=prueba -f head_sha="$S" -f status=completed -f conclusion=success --jq '"    POST 1 · success · id=\(.id)"'
+            sleep 6
+            ver "tras SUCCESS"
+            gh api -X POST "repos/$R/check-runs" -f name=prueba -f head_sha="$S" -f status=completed -f conclusion=failure --jq '"    POST 2 · failure · id=\(.id)"'
+            sleep 6
+            ver "tras FAILURE"
+            gh api -X POST "repos/$R/check-runs" -f name=prueba -f head_sha="$S" -f status=in_progress --jq '"    POST 3 · in_progress · id=\(.id)"'
+            sleep 6
+            ver "tras IN_PROGRESS"
+          } > $O
+          cat $O >> "$GITHUB_STEP_SUMMARY"
+          gh api -X PUT "repos/$R/contents/resultados/E3-$RUNID.md" -f message="obs E3 run $RUNID" -f branch=resultados -f content="$(base64 -w0 $O)" --jq '.content.path'

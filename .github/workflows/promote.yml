@@ -1,0 +1,59 @@
+name: PROMOTE
+
+# E-4 (SEG-5 / C-3). `pull_request_target` corre — segun la doc — el archivo de la rama
+# por defecto, no el del merge commit. Este workflow imprime una linea fija que dice de
+# donde salio, para que el ensayo lo MIDA en vez de citarlo.
+#
+# NO hace `actions/checkout`: la compuerta real solo lee SHAs y llama a la API, asi que
+# `pull_request_target` es seguro aca (no ejecuta codigo del PR).
+#
+# DESVIO DECLARADO respecto del encargo: `contents: write` en vez de `contents: read`.
+# Unico motivo: publicar el observable en `resultados/` para que la silla que audita
+# pueda leerlo por API (no tiene acceso a los logs de Actions). No cambia lo que E-4 mide.
+
+on:
+  pull_request_target:
+    branches: [release]
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      checks: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+      RUNID: ${{ github.run_id }}
+      PRNUM: ${{ github.event.pull_request.number }}
+      HEADREF: ${{ github.event.pull_request.head.ref }}
+      HEADSHA: ${{ github.event.pull_request.head.sha }}
+      BASEREF: ${{ github.event.pull_request.base.ref }}
+      CTX: ${{ github.sha }}
+      GH_REF: ${{ github.ref }}
+      WFSHA: ${{ github.workflow_sha }}
+      EVENTO: ${{ github.event_name }}
+    steps:
+      - name: E4 quien soy
+        run: |
+          set -u
+          O=e4.md
+          {
+            echo "# E4 · promote · PR #$PRNUM · run $RUNID"
+            echo ""
+            echo "    SOY EL PROMOTE DE LA BASE"
+            echo ""
+            echo "    hora_utc            = $(date -u +%FT%TZ)"
+            echo "    run_url             = https://github.com/$R/actions/runs/$RUNID"
+            echo "    evento              = $EVENTO"
+            echo "    head.ref            = $HEADREF"
+            echo "    head.sha            = $HEADSHA"
+            echo "    base.ref            = $BASEREF"
+            echo "    github.sha          = $CTX"
+            echo "    github.ref          = $GH_REF"
+            echo "    github.workflow_sha = $WFSHA"
+          } > $O
+          cat $O >> "$GITHUB_STEP_SUMMARY"
+          gh api -X PUT "repos/$R/contents/resultados/E4-pr$PRNUM-$RUNID.md" -f message="obs E4 PR $PRNUM run $RUNID" -f branch=resultados -f content="$(base64 -w0 $O)" --jq '.content.path'

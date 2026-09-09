@@ -1,0 +1,27 @@
+name: CD
+
+# Repo de ensayo s185 — imita la forma del CD del repo de producto: push a main,
+# concurrency que ENCOLA (no cancela), y una espera larga para poder forzar la carrera de E-1.
+# `paths-ignore` sobre `resultados/`: los workflows publican sus observables ahí, y aunque
+# GitHub garantiza que un push con GITHUB_TOKEN no dispara workflows, esto lo hace explicito.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'resultados/**'
+
+concurrency:
+  group: cd
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Declarar y dormir 90s
+        run: |
+          echo "CD arranca  sha=$GITHUB_SHA  hora=$(date -u +%FT%TZ)"
+          sleep 90
+          echo "CD listo    sha=$GITHUB_SHA  hora=$(date -u +%FT%TZ)"
