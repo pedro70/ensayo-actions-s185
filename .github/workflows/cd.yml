@@ -1,9 +1,8 @@
 name: CD
 
-# Repo de ensayo s185 — imita la forma del CD del repo de producto: push a main,
-# concurrency que ENCOLA (no cancela), y una espera larga para poder forzar la carrera de E-1.
-# `paths-ignore` sobre `resultados/`: los workflows publican sus observables ahí, y aunque
-# GitHub garantiza que un push con GITHUB_TOKEN no dispara workflows, esto lo hace explicito.
+# Repo de ensayo · E-P6-0 (s194, ola D-3 P6): push a main, concurrencia que encola, espera corta.
+# Si el mensaje del commit trae [fallar-reintento], el attempt 2 o posterior FALLA a propósito
+# (E-P6-0 (c): el re-run del CD que falla y deja al smoke saltado).
 
 on:
   push:
@@ -15,13 +14,28 @@ concurrency:
   group: cd
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Declarar y dormir 90s
+      - name: Declarar, esperar 20 s y fallar en el reintento si el commit lo pide
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "CD arranca  sha=$GITHUB_SHA  hora=$(date -u +%FT%TZ)"
-          sleep 90
+          # v2 (Cowork ① C-9): el mensaje se lee por API desde GITHUB_SHA, que la doc de re-run garantiza.
+          MENSAJE=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.message') || MENSAJE=""
+          echo "CD arranca  sha=$GITHUB_SHA  attempt=$GITHUB_RUN_ATTEMPT  hora=$(date -u +%FT%TZ)"
+          sleep 20
+          case "$MENSAJE" in
+            *"[fallar-reintento]"*)
+              if [ "$GITHUB_RUN_ATTEMPT" -gt 1 ]; then
+                echo "FALLA A PROPOSITO en el attempt $GITHUB_RUN_ATTEMPT (E-P6-0 c)"
+                exit 1
+              fi
+              ;;
+          esac
           echo "CD listo    sha=$GITHUB_SHA  hora=$(date -u +%FT%TZ)"
